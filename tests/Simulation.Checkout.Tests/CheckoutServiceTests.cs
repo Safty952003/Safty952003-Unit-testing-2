@@ -8,6 +8,7 @@ using Simulation.Checkout.Application.Abstractions;
 using Simulation.Checkout.Domain;
 using Simulation.Checkout.Domain.Exceptions;
 using Xunit;
+using AutoFixture;
 
 namespace Simulation.Checkout.Tests;
 
@@ -283,5 +284,202 @@ public async Task CheckoutAsync_WhenOrderHasMultipleItems_ShouldCalculateCorrect
     result.Discount.Should().Be(expectedDiscount);
     result.Total.Should().Be(expectedTotal);
 }
+
+
+
+    [Fact]
+    public async Task CheckoutAsync_WhenAllItemsAreInStock_ShouldSaveAndSendConfirmationOnce()
+    {
+        // Arrange
+        var orderRepository = new Mock<IOrderRepository>();
+        var inventoryService = new Mock<IInventoryService>();
+        var notificationService = new Mock<INotificationService>();
+
+        inventoryService
+            .Setup(x => x.IsAvailableAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var sut = new CheckoutService(
+            orderRepository.Object,
+            inventoryService.Object,
+            notificationService.Object);
+
+        var order = new Order
+        {
+            CustomerName = "Ahmed",
+            CustomerEmail = "ahmed@test.com",
+            Items = new List<OrderItem>
+        {
+            new OrderItem
+            {
+                ProductId = Guid.NewGuid(),
+                ProductName = "Product A",
+                UnitPrice = 150m,
+                Quantity = 2
+            },
+            new OrderItem
+            {
+                ProductId = Guid.NewGuid(),
+                ProductName = "Product B",
+                UnitPrice = 400m,
+                Quantity = 1
+            }
+        }
+        };
+
+        // Act
+        var result = await sut.CheckoutAsync(order);
+
+        // Assert
+        result.Should().NotBeNull();
+
+         orderRepository
+            .Verify(x => x.SaveAsync(
+                It.IsAny<Order>(),
+                It.IsAny<CancellationToken>()),
+                Times.Once);
+
+         notificationService
+            .Verify(x => x.SendOrderConfirmationAsync(
+                It.IsAny<CheckoutReceipt>(),
+                It.IsAny<CancellationToken>()),
+                Times.Once);
+    }
+
+
+
+    [Fact]
+    public async Task CheckoutAsync_WhenOneItemIsOutOfStock_ShouldThrowExceptionAndNotSaveOrNotify()
+    {
+        // Arrange
+        var orderRepository = new Mock<IOrderRepository>();
+        var inventoryService = new Mock<IInventoryService>();
+        var notificationService = new Mock<INotificationService>();
+
+        var availableProductId = Guid.NewGuid();
+        var unavailableProductId = Guid.NewGuid();
+
+        inventoryService
+            .Setup(x => x.IsAvailableAsync(
+                availableProductId,
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        inventoryService
+            .Setup(x => x.IsAvailableAsync(
+                unavailableProductId,
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var sut = new CheckoutService(
+            orderRepository.Object,
+            inventoryService.Object,
+            notificationService.Object);
+
+        var order = new Order
+        {
+            CustomerName = "Ahmed",
+            CustomerEmail = "ahmed@test.com",
+            Items = new List<OrderItem>
+        {
+            new OrderItem
+            {
+                ProductId = availableProductId,
+                ProductName = "Product A",
+                UnitPrice = 150m,
+                Quantity = 2
+            },
+            new OrderItem
+            {
+                ProductId = unavailableProductId,
+                ProductName = "Product B",
+                UnitPrice = 400m,
+                Quantity = 1
+            }
+        }
+        };
+
+        // Act
+        var act = async () => await sut.CheckoutAsync(order);
+
+        // Assert
+        await act.Should()
+            .ThrowAsync<InsufficientInventoryException>();
+
+        orderRepository.Verify(
+            x => x.SaveAsync(
+                It.IsAny<Order>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        notificationService.Verify(
+            x => x.SendOrderConfirmationAsync(
+                It.IsAny<CheckoutReceipt>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+
+
+    [Fact]
+    public async Task CheckoutAsync_WhenQuantityIsZero_ShouldThrowExceptionWithoutCallingServices()
+    {
+        // Arrange
+        var orderRepository = new Mock<IOrderRepository>();
+        var inventoryService = new Mock<IInventoryService>();
+        var notificationService = new Mock<INotificationService>();
+
+        var sut = new CheckoutService(
+            orderRepository.Object,
+            inventoryService.Object,
+            notificationService.Object);
+
+        var order = new Order
+        {
+            CustomerName = "Ahmed",
+            CustomerEmail = "ahmed@test.com",
+            Items = new List<OrderItem>
+        {
+            new OrderItem
+            {
+                ProductId = Guid.NewGuid(),
+                ProductName = "Product A",
+                UnitPrice = 150m,
+                Quantity = 0
+            }
+        }
+        };
+
+        // Act
+        var act = async () => await sut.CheckoutAsync(order);
+
+        // Assert
+        await act.Should()
+            .ThrowAsync<InvalidQuantityException>();
+
+        inventoryService.Verify(
+            x => x.IsAvailableAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        orderRepository.Verify(
+            x => x.SaveAsync(
+                It.IsAny<Order>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        notificationService.Verify(
+            x => x.SendOrderConfirmationAsync(
+                It.IsAny<CheckoutReceipt>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
 
 }
