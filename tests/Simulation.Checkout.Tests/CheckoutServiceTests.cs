@@ -8,7 +8,7 @@ using Simulation.Checkout.Application.Abstractions;
 using Simulation.Checkout.Domain;
 using Simulation.Checkout.Domain.Exceptions;
 using Xunit;
-using AutoFixture;
+
 
 namespace Simulation.Checkout.Tests;
 
@@ -481,5 +481,9 @@ public async Task CheckoutAsync_WhenOrderHasMultipleItems_ShouldCalculateCorrect
                 It.IsAny<CancellationToken>()),
             Times.Never);
     }
+
+
+
+    
 
 }
